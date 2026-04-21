@@ -1,0 +1,38 @@
+# ==== Python ====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ==== 训练产物 ====
+checkpoints/
+logs/
+outputs/
+runs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# ==== 数据 ====
+data/sevir/
+data/*.h5
+data/*.hdf5
+data/*.npy
+*.npy
+*.h5
+
+# ==== IDE / OS ====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ==== 临时/日志 ====
+*.log
+*.tmp
+nohup.out

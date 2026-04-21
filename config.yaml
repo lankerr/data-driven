@@ -1,0 +1,86 @@
+# ============================================================
+# SEVIR 气象回波预测实验 - 统一配置文件
+# ============================================================
+
+# --- 数据配置 ---
+data:
+  # SEVIR Lite npy 数据 (优先使用)
+  lite_dir: "C:/Users/97290/Desktop/datasets/sevir_lite_128"
+  # SEVIR 原始 HDF5 (lite_dir不存在时回退)
+  sevir_dir: "./data/sevir"
+  catalog_path: "./data/sevir/CATALOG.csv"
+
+  img_size: 384                           # 上采样至 384x384
+  in_frames: 13                           # 输入帧数
+  out_frames: 12                          # 预测帧数 (13+12=25 匹配 lite 总帧数)
+  stride: 25                              # 滑动窗口步长 (25=不重叠, 1=最大重叠)
+  modalities: ["vil"]
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  num_workers: 4
+  vil_scale: 47.0
+
+# --- 模型配置 ---
+model:
+  # 实验选择: resnet_unet / vit_unet / resnet_vit_residual /
+  #           vit_resnet_residual / hybrid_unet /
+  #           early_fusion / mid_fusion / late_fusion
+  experiment: "resnet_unet"
+
+  # 骨干网络
+  resnet_backbone: "resnet34"             # resnet34 / resnet50
+  vit_backbone: "swin_t"                  # swin_t / swin_s
+  pretrained: true                        # 是否使用 ImageNet 预训练权重
+  freeze_encoder: false                   # 是否冻结编码器
+  reduce_stem: true                       # 384分辨率启用, 避免过度下采样
+
+  # 解码器
+  decoder_channels: [256, 128, 64, 32]
+  dropout: 0.1
+
+# --- 训练配置 ---
+training:
+  batch_size: 2                           # 384分辨率显存受限, 用小batch
+  epochs: 100
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  scheduler: "cosine"                     # cosine / step / plateau
+  warmup_epochs: 5
+
+  # 损失函数
+  loss: "combined"                        # mse / bmse / ssim / combined
+  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]  # 根据VIL阈值的权重
+  bmse_thresholds: [16, 74, 133, 160, 181]    # VIL阈值 (对应像素值)
+  ssim_weight: 0.3                        # combined loss 中 SSIM 的权重
+
+  # 早停
+  patience: 15
+  min_delta: 1.0e-4
+
+  # 保存
+  save_dir: "./checkpoints"
+  log_dir: "./logs"
+
+# --- 评估配置 ---
+evaluation:
+  # CSI/POD/FAR 的评估阈值 (对应实际VIL值 kg/m²)
+  thresholds: [16, 74, 133, 160, 181]
+  # 对应的降水强度标签
+  threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
+
+# --- 多模态融合配置 ---
+multimodal:
+  fusion_type: "early"                    # early / mid / late
+  modal_dropout: 0.2                      # 训练时随机丢弃模态的概率
+  cross_attention_heads: 8                # 中期融合的交叉注意力头数
+
+# --- Mythos-Earthformer 配置 ---
+# Earthformer U-Net 骨架 + 权重共享的循环潜空间推理瓶颈
+mythos:
+  base_dim: 128                           # Scale-1 基础通道数 (下采样后为 2x)
+  num_heads: 4                            # Cuboid Attention 头数
+  num_steps_range: [3, 8]                 # 训练期 N 的随机区间 [low, high]
+  eval_num_steps: 6                       # 推理期固定 N; 可调大 (10/20) 深度思考
+  attn_type: "conv3d"                     # "cuboid" 使用官方算子, "conv3d" 轻量占位符
+  use_checkpoint: false                   # 循环单元是否启用 activation checkpointing

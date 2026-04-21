@@ -1,0 +1,237 @@
+%% ============================================================================
+%%  data_driven/ARCHITECTURES.mmd
+%%  SEVIR 气象回波外推 —— 全部架构与思想的统一可视化
+%%  (CNN / ViT / Residual-Stack / Hybrid / Multimodal / Mythos-Earthformer)
+%%
+%%  渲染方式:
+%%    1. VSCode 装 "Markdown Preview Mermaid Support" 或 "Mermaid Preview"
+%%    2. 或 https://mermaid.live 粘贴内容
+%% ============================================================================
+flowchart TB
+
+  %% ------------------------------ 样式 -------------------------------------
+  classDef input    fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+  classDef cnn      fill:#fff3e0,stroke:#ef6c00,stroke-width:1px,color:#000
+  classDef vit      fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1px,color:#000
+  classDef fuse     fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#000
+  classDef loop     fill:#ffebee,stroke:#c62828,stroke-width:3px,color:#000
+  classDef out      fill:#ede7f6,stroke:#4527a0,stroke-width:2px,color:#000
+  classDef loss     fill:#fffde7,stroke:#f9a825,stroke-width:1px,color:#000
+  classDef note     fill:#fafafa,stroke:#9e9e9e,stroke-dasharray:4 3,color:#333
+
+  %% ================================================================
+  %% 0. 全局输入输出规格
+  %% ================================================================
+  subgraph IO["① 输入输出规格 (SEVIR VIL)"]
+    direction LR
+    X["<b>Input</b><br/>[B, 13, 384, 384]<br/>(13 帧 × 5min = 65min 历史)"]:::input
+    Y["<b>Target</b><br/>[B, 12, 384, 384]<br/>(12 帧 × 5min = 60min 未来)"]:::out
+    X -.->|learn mapping| Y
+  end
+
+  %% ================================================================
+  %% 1. 通用原子模块 (所有 UNet 系列共享)
+  %% ================================================================
+  subgraph CORE["② 共享原子模块"]
+    direction LR
+    CNNENC["<b>ResNetEncoder</b><br/>4 级下采样<br/>ch=[64,128,256,512]<br/>局部纹理 / 边缘"]:::cnn
+    VITENC["<b>SwinEncoder</b><br/>4 级 shifted-window<br/>ch=[96,192,384,768]<br/>全局平流 / 环流"]:::vit
+    DEC["<b>UNet Decoder</b><br/>4 级上采样<br/>skip-connection<br/>输出 [B, T_out, H, W]"]:::fuse
+  end
+
+  %% ================================================================
+  %% 2. 现有五组消融实验
+  %% ================================================================
+  subgraph EXP["③ 五组 CNN/ViT 消融实验 (已有)"]
+    direction TB
+
+    %% --- Exp 1 ---
+    subgraph E1["Exp-1 · resnet_unet"]
+      direction LR
+      E1_IN["x"]:::input --> E1_ENC["ResNet-34"]:::cnn --> E1_DEC["UNet Dec"]:::fuse --> E1_OUT["ŷ"]:::out
+    end
+
+    %% --- Exp 2 ---
+    subgraph E2["Exp-2 · vit_unet"]
+      direction LR
+      E2_IN["x"]:::input --> E2_ENC["Swin-T"]:::vit --> E2_DEC["UNet Dec"]:::fuse --> E2_OUT["ŷ"]:::out
+    end
+
+    %% --- Exp 3: ResNet 打底 + ViT 修残差 ---
+    subgraph E3["Exp-3 · resnet_vit_residual (CNN→ViT)"]
+      direction TB
+      E3_X["x"]:::input
+      E3_BASE["ResNet + UNet-Dec<br/>(base)"]:::cnn
+      E3_CAT["concat(x, y_base)"]:::fuse
+      E3_REF["Swin + UNet-Dec<br/>(Δy)"]:::vit
+      E3_ADD(("+")):::fuse
+      E3_OUT["ŷ_final"]:::out
+      E3_X --> E3_BASE --> |y_base| E3_ADD
+      E3_X --> E3_CAT
+      E3_BASE --> |y_base| E3_CAT
+      E3_CAT --> E3_REF --> |Δy| E3_ADD
+      E3_ADD --> E3_OUT
+    end
+
+    %% --- Exp 4: ViT 打底 + ResNet 修残差 (推荐) ---
+    subgraph E4["⭐ Exp-4 · vit_resnet_residual (ViT→CNN)"]
+      direction TB
+      E4_X["x"]:::input
+      E4_BASE["Swin + UNet-Dec<br/>全局平流 y_base"]:::vit
+      E4_CAT["concat(x, y_base)"]:::fuse
+      E4_REF["ResNet + UNet-Dec<br/>对流局部修补 Δy"]:::cnn
+      E4_ADD(("+")):::fuse
+      E4_OUT["ŷ_final"]:::out
+      E4_X --> E4_BASE --> |y_base| E4_ADD
+      E4_X --> E4_CAT
+      E4_BASE --> |y_base| E4_CAT
+      E4_CAT --> E4_REF --> |Δy| E4_ADD
+      E4_ADD --> E4_OUT
+    end
+
+    %% --- Exp 5: 双分支门控融合 ---
+    subgraph E5["Exp-5 · hybrid_unet (并行 + Gate)"]
+      direction TB
+      E5_X["x"]:::input
+      E5_R["ResNet Enc<br/>[f1_r..f4_r]"]:::cnn
+      E5_S["Swin Enc<br/>[f1_s..f4_s]"]:::vit
+      E5_G["FeatureFusionGate × 4<br/>f_fused = g·f_r + (1-g)·f_s"]:::fuse
+      E5_DEC["UNet Dec"]:::fuse
+      E5_OUT["ŷ"]:::out
+      E5_X --> E5_R --> E5_G
+      E5_X --> E5_S --> E5_G
+      E5_G --> E5_DEC --> E5_OUT
+    end
+  end
+
+  %% ================================================================
+  %% 3. 多模态融合 (VIL + VIS + IR069 + IR107 + ...)
+  %% ================================================================
+  subgraph MM["④ 多模态融合 (VIL/VIS/IR/WV/Lght)"]
+    direction TB
+
+    subgraph MM_E["Early Fusion"]
+      MM_E_IN["concat(VIL, VIS, IR069, IR107)<br/>沿通道拼"]:::input
+      MM_E_ENC["共享 Encoder"]:::cnn
+      MM_E_DEC["Decoder"]:::fuse
+      MM_E_OUT["ŷ"]:::out
+      MM_E_IN --> MM_E_ENC --> MM_E_DEC --> MM_E_OUT
+    end
+
+    subgraph MM_M["Mid Fusion"]
+      MM_M_V["VIL Enc"]:::cnn
+      MM_M_VIS["VIS Enc"]:::cnn
+      MM_M_IR["IR Enc"]:::cnn
+      MM_M_X["Cross-Attention<br/>(8 heads)"]:::vit
+      MM_M_DEC["Shared Dec"]:::fuse
+      MM_M_OUT["ŷ"]:::out
+      MM_M_V --> MM_M_X
+      MM_M_VIS --> MM_M_X
+      MM_M_IR --> MM_M_X
+      MM_M_X --> MM_M_DEC --> MM_M_OUT
+    end
+
+    subgraph MM_L["Late Fusion"]
+      MM_L_V["VIL-only Model ŷ₁"]:::cnn
+      MM_L_VIS["VIS-only Model ŷ₂"]:::cnn
+      MM_L_IR["IR-only Model ŷ₃"]:::cnn
+      MM_L_W["可学习加权<br/>Σ αᵢ ŷᵢ"]:::fuse
+      MM_L_OUT["ŷ"]:::out
+      MM_L_V --> MM_L_W
+      MM_L_VIS --> MM_L_W
+      MM_L_IR --> MM_L_W
+      MM_L_W --> MM_L_OUT
+    end
+  end
+
+  %% ================================================================
+  %% 4. ⭐ Mythos-Earthformer (新架构)
+  %% ================================================================
+  subgraph MY["⑤ ⭐ Mythos-Earthformer · 权重共享的潜空间循环推理"]
+    direction TB
+
+    MY_X["<b>x</b><br/>[B, 13, H, W]<br/>(unsqueeze C=1 → NTHWC)"]:::input
+    MY_PE["PatchEmbed (Linear 1→128)<br/>[B,13,H,W,128]"]:::fuse
+    MY_ENC["<b>Encoder Scale-1</b><br/>StackCuboidSelfAttention × 1<br/>(local + shifted cuboid)"]:::vit
+    MY_TP["<b>TemporalProj</b><br/>T 维 Linear 13→12<br/>[B,12,H,W,128]"]:::fuse
+    MY_SKIP(["💾 Skip_1 缓存<br/>[B,12,H,W,128]"]):::note
+    MY_DOWN["<b>PatchMerging3D</b> (1,2,2)<br/>128 → 256<br/>[B,12,H/2,W/2,256] = Z₀"]:::fuse
+
+    subgraph LOOP["🔁 Recurrent Latent Bottleneck (核心！权重共享)"]
+      direction TB
+      MY_Z0["Z₀"]:::loop
+      MY_CELL["<b>recurrent_cell</b><br/>StackCuboidSelfAttention<br/>(只有 1 个实例, N 次调用)"]:::loop
+      MY_ZN["Z_N"]:::loop
+      MY_Z0 -.->|for i in range(N)| MY_CELL
+      MY_CELL -.->|weight tying| MY_CELL
+      MY_CELL -.->|最后一次| MY_ZN
+
+      MY_NOTE["<b>N 调度</b><br/>• training: N ∼ U{3..8} (Random Depth)<br/>• eval:     N = 6 (默认) / 可拉大到 10-20<br/>• 可选 activation checkpoint 省显存"]:::note
+    end
+
+    MY_UP["SpatialUpsample ×2<br/>256 → 128<br/>[B,12,H,W,128]"]:::fuse
+    MY_ADD(("⊕ add")):::fuse
+    MY_DEC["<b>Decoder Scale-1</b><br/>StackCuboidSelfAttention × 1"]:::vit
+    MY_HEAD["OutputHead (Linear 128→1)"]:::fuse
+    MY_OUT["<b>ŷ</b><br/>[B, 12, H, W]"]:::out
+
+    MY_X --> MY_PE --> MY_ENC --> MY_TP --> MY_SKIP
+    MY_TP --> MY_DOWN --> MY_Z0
+    MY_ZN --> MY_UP --> MY_ADD
+    MY_SKIP --> MY_ADD
+    MY_ADD --> MY_DEC --> MY_HEAD --> MY_OUT
+  end
+
+  %% ================================================================
+  %% 5. 损失函数 (新旧切换)
+  %% ================================================================
+  subgraph LOSS["⑥ 损失函数选型"]
+    direction LR
+    L_OLD["<b>旧: combined</b><br/>(1-α)·B-MSE + α·SSIM<br/>分级加权 weights=[1,2,5,10,30]<br/>强降水主导梯度"]:::loss
+    L_NEW["<b>⭐ 新: mse_ssim</b><br/>(1-α)·MSE + α·SSIM<br/>与 Earthformer 官方对齐<br/>梯度更干净, 不过分偏心强回波"]:::loss
+    L_RES["Residual Loss<br/>L_final + β·L_base<br/>(仅 Exp-3/4 用)"]:::loss
+    L_OLD -. 可选 .-> L_NEW
+    L_NEW -.-> L_RES
+  end
+
+  %% ================================================================
+  %% 6. 堆叠思路 (把现有组件再往上堆)
+  %% ================================================================
+  subgraph STACK["⑦ 未来可扩展的堆叠思路 (server 上实验)"]
+    direction TB
+
+    S1["<b>S1. Mythos 当 y_base, ResNet 修残差</b><br/>= Exp-4 的时空升级版<br/>ViT→ResNet 残差思想 × 循环瓶颈<br/>y_final = Mythos(x) + ResNet(concat(x, Mythos(x)))"]:::note
+    S2["<b>S2. Hybrid Gate in Bottleneck</b><br/>recurrent_cell 内部并联 Swin + Conv3D<br/>用 FeatureFusionGate 混合<br/>= Exp-5 的时空版"]:::note
+    S3["<b>S3. Multimodal Mythos</b><br/>VIL / IR / VIS 各自 PatchEmbed<br/>在 Scale-1 Cross-Attention 融合<br/>共享同一个 recurrent bottleneck"]:::note
+    S4["<b>S4. Diffusion / PreDiff 外挂</b><br/>把 Mythos 的 Z_N 当 diffusion 的条件<br/>解决长程预测模糊问题 (FrameDrop)"]:::note
+    S5["<b>S5. Deep-N Ensemble</b><br/>推理期 N=4/8/16/32 各跑一次<br/>几何平均, 0 额外训练成本<br/>= Recurrent Depth 天生的 ensemble"]:::note
+    S6["<b>S6. AttnRes 算子替换</b><br/>把 recurrent_cell 换成<br/>AttnResStackCuboidSelfAttentionBlock<br/>(本地 earth-forecasting-transformer 已有)"]:::note
+
+    S1 --- S2 --- S3 --- S4 --- S5 --- S6
+  end
+
+  %% ================================================================
+  %% 7. 训练 & OOM 应对 (要迁服务器了)
+  %% ================================================================
+  subgraph OPS["⑧ 训练/显存实操 (本地 OOM → 服务器)"]
+    direction TB
+    O1["<b>本地失败点</b>: 384×384 + Cuboid Attention<br/>即使 B=2 也 OOM"]:::note
+    O2["<b>服务器上的调度</b><br/>• batch_size: 1 micro × grad_accum=16<br/>• precision: 16-mixed / bf16<br/>• attn_type: 'cuboid' + use_checkpoint=true<br/>• num_steps_range: [3,6] 先稳住"]:::note
+    O3["<b>渐进式启动</b><br/>① 96×96 + base_dim=64 → 5 ep 确认 loss↓<br/>② 192×192 + base_dim=128 → 10 ep<br/>③ 384×384 + 完整配置 → 100 ep"]:::note
+    O4["<b>N vs CSI 消融 (最值得做的图)</b><br/>训练 1 个模型<br/>推理枚举 N=1,2,4,6,10,15,20<br/>画曲线 → 论文核心卖点"]:::note
+    O1 --> O2 --> O3 --> O4
+  end
+
+  %% ================================================================
+  %% 全局连接 (宏观数据流)
+  %% ================================================================
+  IO -.-> CORE
+  CORE -.-> EXP
+  CORE -.-> MM
+  CORE -.-> MY
+  EXP -.-> LOSS
+  MM -.-> LOSS
+  MY -.-> LOSS
+  MY ==>|进化方向| STACK
+  STACK -.-> OPS
+  LOSS -.-> OPS
