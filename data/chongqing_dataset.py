@@ -2,12 +2,16 @@
 重庆雷达 VIL 数据集加载器
 ---------------------------------
 - 目录: C:/Users/97290/Desktop/datasets/2026chongqing/vil_gpu_daily_240_simple
-- 每个 npy: (240, 384, 384) float32, 值域 [0,1], 间隔 6min (240帧 = 24h)
+- 每个 npy: (240, 384, 384) float32, 值域 [0,1] (= VIL_kg_m2 / 80), 间隔 6min
 - 排除 2024 年数据 (用户说有问题)
 - 按日期排序后 train/val/test = 7/1.5/1.5
 
-在同一 __getitem__ 中返回 (in_frames, out_frames) 的连续窗口，
-滑窗仅在单日内部进行 (跨零点不跨)
+重要预处理管线 (来自 MOE/nowcastnet 经验, 见 CHONGQING_EXPERIMENTS.md):
+    stored(0~1) × 80 → VIL (kg/m²)
+    → 截断 VIL < cutoff (默认 1.0 kg/m²) → 杂波归零
+    → 可选 QMap(CQ → SEVIR)            ← data/assets/cq_to_sevir_qmap.npy
+    → log1p(VIL) / log1p(80)            → 归一化到 [0,1]
+阈值用物理 VIL (例如 [1,5,10,20,30,50] kg/m²), 评估时也按同一管线映射。
 """
 import os
 import re
@@ -18,6 +22,53 @@ from torch.utils.data import Dataset, DataLoader
 
 
 DATE_RE = re.compile(r"day_simple_(\d{8})\.npy$")
+
+# ─────────────── VIL 物理尺度参数 ────────────────
+VIL_MAX = 80.0                           # kg/m²
+LOG1P_VIL_MAX = float(np.log1p(VIL_MAX)) # ≈ 4.394
+DEFAULT_QMAP = os.path.join(os.path.dirname(__file__), "assets", "cq_to_sevir_qmap.npy")
+
+
+def _load_qmap(path):
+    if path is None or not os.path.isfile(path):
+        return None
+    t = np.load(path).astype(np.float32)
+    # 保证列 0 递增
+    if t.ndim != 2 or t.shape[1] != 2:
+        raise ValueError(f"QMap 表形状异常: {t.shape}, 期望 (N,2)")
+    return t
+
+
+def stored_to_vil(seq_stored, scale=VIL_MAX):
+    """stored [0,1] → 物理 VIL kg/m²"""
+    return seq_stored * scale
+
+
+def apply_cq_pipeline(seq_stored, qmap_table=None, cutoff=1.0, use_qmap=True):
+    """
+    CQ 数据预处理管线 (numpy float32):
+        stored → VIL(kg/m²) → cutoff → QMap(CQ→SEVIR) → log1p 归一化
+    返回 [0,1] 范围的 float32 tensor 数据.
+    """
+    vil = stored_to_vil(seq_stored.astype(np.float32, copy=False))
+    # 截断杂波
+    if cutoff > 0:
+        vil = np.where(vil > cutoff, vil, 0.0)
+    # 分位数映射
+    if use_qmap and qmap_table is not None:
+        mask = vil > 0
+        if mask.any():
+            vil_mapped = np.zeros_like(vil)
+            vil_mapped[mask] = np.interp(vil[mask], qmap_table[:, 0], qmap_table[:, 1])
+            vil = vil_mapped
+    # log1p 归一化
+    vil_norm = np.log1p(np.maximum(vil, 0.0)) / LOG1P_VIL_MAX
+    return vil_norm.astype(np.float32)
+
+
+def vil_phys_to_norm(vil_phys):
+    """物理 VIL (kg/m²) → log1p 归一化空间 (用于把阈值换算到归一化域)"""
+    return float(np.log1p(max(vil_phys, 0.0)) / LOG1P_VIL_MAX)
 
 
 def _list_days(root, exclude_years=(2024,)):
@@ -46,12 +97,18 @@ class ChongqingDailyDataset(Dataset):
                  stride=None,
                  train_ratio=0.7, val_ratio=0.15,
                  exclude_years=(2024,),
-                 max_days=None):
+                 max_days=None,
+                 use_qmap=True, qmap_path=None, vil_cutoff=1.0):
         super().__init__()
         self.in_frames = in_frames
         self.out_frames = out_frames
         self.seq_len = in_frames + out_frames
         self.img_size = img_size
+        self.use_qmap = use_qmap
+        self.vil_cutoff = float(vil_cutoff)
+        self.qmap_table = _load_qmap(qmap_path or DEFAULT_QMAP) if use_qmap else None
+        if use_qmap and self.qmap_table is None:
+            print(f"[Chongqing][warn] 要求 use_qmap=True 但未找到 qmap 表, 降级为不做映射")
 
         all_days = _list_days(data_dir, exclude_years=exclude_years)
         n = len(all_days)
@@ -91,7 +148,12 @@ class ChongqingDailyDataset(Dataset):
         di, st = self.samples[idx]
         fp = self.days[di][1]
         data = np.load(fp, mmap_mode="r")
-        seq = np.asarray(data[st:st + self.seq_len], dtype=np.float32).copy()  # [0,1]
+        seq = np.asarray(data[st:st + self.seq_len], dtype=np.float32).copy()  # stored [0,1]
+        # 正确预处理: stored → VIL → cutoff → QMap → log1p
+        seq = apply_cq_pipeline(seq,
+                                qmap_table=self.qmap_table,
+                                cutoff=self.vil_cutoff,
+                                use_qmap=self.use_qmap)
         seq = torch.from_numpy(seq)
 
         H, W = seq.shape[-2:]
@@ -120,6 +182,9 @@ def build_chongqing_loaders(cfg):
         val_ratio=dc.get("val_ratio", 0.15),
         exclude_years=tuple(dc.get("exclude_years", [2024])),
         max_days=dc.get("max_days", None),
+        use_qmap=dc.get("use_qmap", True),
+        qmap_path=dc.get("qmap_path", None),
+        vil_cutoff=dc.get("vil_cutoff", 1.0),
     )
     train_ds = ChongqingDailyDataset(split="train", **common)
     val_ds = ChongqingDailyDataset(split="val", **common)

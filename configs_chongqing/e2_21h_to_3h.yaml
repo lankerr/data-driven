@@ -11,6 +11,8 @@ data:
   exclude_years: [2024]
   num_workers: 2
   max_days: null
+  use_qmap: false
+  vil_cutoff: 1.0
 
 model:
   experiment: "vit_unet"
@@ -30,10 +32,8 @@ training:
 
   loss: "combined"
   ssim_weight: 0.3
-  bmse_thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
-  bmse_weights:    [1.0,   14.0,  18.0,  31.0,  33.0,  100.0]
-  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
-  bmse_thresholds: [16, 74, 133, 160, 181]
+  bmse_thresholds: [0.158, 0.408, 0.546, 0.693]
+  bmse_weights:    [1.0,   7.0,   22.0,  39.0,  100.0]
 
   patience: 12
   min_delta: 1.0e-4
@@ -43,7 +43,7 @@ training:
   grad_checkpoint: true  # 若 OOM, 尝试激活检查点 (当前 ViTUNet 未支持, 仅标识)
 
 evaluation:
-  thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
-  threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
+  thresholds: [0.158, 0.408, 0.546, 0.693]
+  threshold_names: ["VIL1", "VIL5", "VIL10", "VIL20"]
 
 experiment_tag: "cq_e2_21h_to_3h_vitunet"
