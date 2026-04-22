@@ -1,0 +1,47 @@
+# E2: 大力出奇迹 21h → 3h (210帧 → 30帧 , VIT-UNET)
+# 警告: 极可能 OOM, 这里就是为了确认上限
+data:
+  chongqing_dir: "C:/Users/97290/Desktop/datasets/2026chongqing/vil_gpu_daily_240_simple"
+  img_size: 384
+  in_frames: 210         # 21h @ 6min
+  out_frames: 30         # 3h @ 6min
+  stride: 240            # 一天只出 1 个样本 (210+30=240 刚好一整天)
+  train_ratio: 0.7
+  val_ratio: 0.15
+  exclude_years: [2024]
+  num_workers: 2
+  max_days: null
+
+model:
+  experiment: "vit_unet"
+  vit_backbone: "swin_t"
+  pretrained: false      # 210 通道 adapter 与 ImageNet 权重无对齐价值
+  reduce_stem: true
+  decoder_channels: [256, 128, 64, 32]
+  dropout: 0.1
+
+training:
+  batch_size: 1
+  epochs: 60
+  lr: 8.0e-5
+  weight_decay: 1.0e-5
+  scheduler: "cosine"
+  warmup_epochs: 5
+
+  loss: "mse_ssim"
+  ssim_weight: 0.3
+  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
+  bmse_thresholds: [16, 74, 133, 160, 181]
+
+  patience: 12
+  min_delta: 1.0e-4
+  save_dir: "./checkpoints_cq"
+  log_dir: "./logs_cq"
+  amp: true
+  grad_checkpoint: true  # 若 OOM, 尝试激活检查点 (当前 ViTUNet 未支持, 仅标识)
+
+evaluation:
+  thresholds: [16, 74, 133, 160, 181]
+  threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
+
+experiment_tag: "cq_e2_21h_to_3h_vitunet"

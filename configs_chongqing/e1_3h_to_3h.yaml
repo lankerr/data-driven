@@ -1,0 +1,45 @@
+# E1: 3h → 3h 基线 (VIT-UNET 直接 30 帧 → 30 帧)
+data:
+  chongqing_dir: "C:/Users/97290/Desktop/datasets/2026chongqing/vil_gpu_daily_240_simple"
+  img_size: 384
+  in_frames: 30          # 3h @ 6min
+  out_frames: 30         # 3h @ 6min
+  stride: 30             # 不重叠窗口; 一天 240帧 ⇒ 4 个样本
+  train_ratio: 0.7
+  val_ratio: 0.15
+  exclude_years: [2024]
+  num_workers: 2
+  max_days: null
+
+model:
+  experiment: "vit_unet"
+  vit_backbone: "swin_t"
+  pretrained: true
+  reduce_stem: true
+  decoder_channels: [256, 128, 64, 32]
+  dropout: 0.1
+
+training:
+  batch_size: 2
+  epochs: 80
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  scheduler: "cosine"
+  warmup_epochs: 5
+
+  loss: "mse_ssim"
+  ssim_weight: 0.3
+  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
+  bmse_thresholds: [16, 74, 133, 160, 181]
+
+  patience: 15
+  min_delta: 1.0e-4
+  save_dir: "./checkpoints_cq"
+  log_dir: "./logs_cq"
+  amp: true             # 开启混合精度
+
+evaluation:
+  thresholds: [16, 74, 133, 160, 181]
+  threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
+
+experiment_tag: "cq_e1_3h_to_3h_vitunet"

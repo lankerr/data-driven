@@ -1,0 +1,54 @@
+# E3: 多尺度时间金字塔 (3h→1h→30min→6min)
+# past=21h (210帧) 但每级只切 ≤30 帧, 计算量 ≈ 4 × E1
+# NO detach: 梯度跨级贯通 (端到端深度监督)
+data:
+  chongqing_dir: "C:/Users/97290/Desktop/datasets/2026chongqing/vil_gpu_daily_240_simple"
+  img_size: 384
+  in_frames: 210                  # past 21h (提供 L0/L1 足够历史)
+  out_frames: 30                  # 3h future @ 6min
+  stride: 240                     # 一天 1 个样本
+  train_ratio: 0.7
+  val_ratio: 0.15
+  exclude_years: [2024]
+  num_workers: 2
+
+model:
+  experiment: "mstc"
+  vit_backbone: "swin_t"
+  pretrained: true
+  reduce_stem: true
+  dropout: 0.1
+
+mstc:
+  use_fine: true
+  detach_between_stages: false
+  loss_weights:
+    w_l0: 0.1   # 1 帧 @ 3h 终点
+    w_l1: 0.2   # 3 帧 @ 1h
+    w_l2: 0.3   # 6 帧 @ 30min
+    w_l3: 1.0   # 30 帧 @ 6min (final)
+
+training:
+  batch_size: 1
+  epochs: 60
+  lr: 8.0e-5
+  weight_decay: 1.0e-5
+  scheduler: "cosine"
+  warmup_epochs: 5
+
+  loss: "mse_ssim"
+  ssim_weight: 0.3
+  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
+  bmse_thresholds: [16, 74, 133, 160, 181]
+
+  patience: 12
+  min_delta: 1.0e-4
+  save_dir: "./checkpoints_cq"
+  log_dir: "./logs_cq"
+  amp: true
+
+evaluation:
+  thresholds: [16, 74, 133, 160, 181]
+  threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
+
+experiment_tag: "cq_e3_mstp_nodetach"

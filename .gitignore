@@ -8,7 +8,9 @@ venv/
 
 # ==== 训练产物 ====
 checkpoints/
+checkpoints_cq/
 logs/
+logs_cq/
 outputs/
 runs/
 wandb/
