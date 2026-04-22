@@ -27,10 +27,12 @@ training:
   scheduler: "cosine"
   warmup_epochs: 5
 
-  loss: "mse_ssim"
+  # 重庆数据分布 99.94% < 0.012 (见 verify_distribution.py), 必须用 BMSE 分档加权
+  # 阈值基于 CQ p99/p99.5/p99.8/p99.9/p99.99 分位数, 权重按 1/sqrt(freq) 归一化
+  loss: "combined"           # BMSE + SSIM
   ssim_weight: 0.3
-  bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
-  bmse_thresholds: [16, 74, 133, 160, 181]
+  bmse_thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
+  bmse_weights:    [1.0,   14.0,  18.0,  31.0,  33.0,  100.0]
 
   patience: 15
   min_delta: 1.0e-4
@@ -39,7 +41,7 @@ training:
   amp: true             # 开启混合精度
 
 evaluation:
-  thresholds: [16, 74, 133, 160, 181]
+  thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
   threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
 
 experiment_tag: "cq_e1_3h_to_3h_vitunet"

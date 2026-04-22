@@ -28,8 +28,10 @@ training:
   scheduler: "cosine"
   warmup_epochs: 5
 
-  loss: "mse_ssim"
+  loss: "combined"
   ssim_weight: 0.3
+  bmse_thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
+  bmse_weights:    [1.0,   14.0,  18.0,  31.0,  33.0,  100.0]
   bmse_weights: [1.0, 2.0, 5.0, 10.0, 30.0]
   bmse_thresholds: [16, 74, 133, 160, 181]
 
@@ -41,7 +43,7 @@ training:
   grad_checkpoint: true  # 若 OOM, 尝试激活检查点 (当前 ViTUNet 未支持, 仅标识)
 
 evaluation:
-  thresholds: [16, 74, 133, 160, 181]
+  thresholds: [0.012, 0.018, 0.031, 0.047, 0.135]
   threshold_names: ["轻度", "中度", "重度", "极端", "暴雨"]
 
 experiment_tag: "cq_e2_21h_to_3h_vitunet"

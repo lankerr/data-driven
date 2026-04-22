@@ -137,7 +137,7 @@ def train_epoch(model, loader, criterion, optimizer, scaler, device,
 
 
 @torch.no_grad()
-def validate(model, loader, criterion, device, is_mstc, use_amp):
+def validate(model, loader, criterion, device, is_mstc, use_amp, eval_thresholds=None, eval_names=None):
     model.eval()
     total = 0.0
     metrics_sum = {}
@@ -150,7 +150,7 @@ def validate(model, loader, criterion, device, is_mstc, use_amp):
             loss = compute_loss(criterion, out, y, is_mstc)
         pred = get_pred_tensor(out, is_mstc).float()
         total += loss.item()
-        m = compute_all_metrics(pred.cpu(), y.cpu())
+        m = compute_all_metrics(pred.cpu(), y.cpu(), thresholds=eval_thresholds, threshold_names=eval_names)
         for k, v in m.items():
             metrics_sum[k] = metrics_sum.get(k, 0.0) + v
         n += 1
@@ -178,6 +178,15 @@ def main():
 
     # 数据
     train_loader, val_loader, test_loader = build_chongqing_loaders(cfg)
+
+    # eval thresholds (支持 [0,1] 浮点 或 [0,255] 整数)
+    ev = cfg.get("evaluation", {})
+    raw_t = ev.get("thresholds", [16, 74, 133, 160, 181])
+    if max(raw_t) > 1.5:
+        eval_thresholds = [t / 255.0 for t in raw_t]
+    else:
+        eval_thresholds = list(raw_t)
+    eval_names = ev.get("threshold_names", None)
 
     # 模型 + 损失
     model = build_cq_model(cfg).to(device)
@@ -209,7 +218,9 @@ def main():
             tr_loss = train_epoch(model, train_loader, criterion,
                                   optimizer, scaler, device, is_mstc, use_amp)
             val_loss, val_metrics = validate(model, val_loader, criterion,
-                                             device, is_mstc, use_amp)
+                                             device, is_mstc, use_amp,
+                                             eval_thresholds=eval_thresholds,
+                                             eval_names=eval_names)
             scheduler.step()
             lr = optimizer.param_groups[0]["lr"]
             print(f"  E{epoch:3d} | tr {tr_loss:.4f} | val {val_loss:.4f} "
@@ -243,7 +254,9 @@ def main():
         ckpt = torch.load(os.path.join(save_dir, "best.pt"), weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
         test_loss, test_metrics = validate(model, test_loader, criterion,
-                                           device, is_mstc, use_amp)
+                                           device, is_mstc, use_amp,
+                                           eval_thresholds=eval_thresholds,
+                                           eval_names=eval_names)
         print(f"\n  === TEST [{tag}] ===")
         print_metrics(test_metrics, prefix="    ")
         print(f"    test_loss={test_loss:.4f}")

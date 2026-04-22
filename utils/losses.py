@@ -175,11 +175,19 @@ class ResidualLoss(nn.Module):
 
 
 def build_loss(cfg):
-    """根据配置创建损失函数"""
+    """根据配置创建损失函数
+
+    bmse_thresholds 支持两种单位:
+      - 整数 (如 [16,74,133,160,181]) → 自动除以 255 归一化
+      - 浮点 (如 [0.012,0.018,0.031,0.047,0.135]) 且 max < 1.5 → 视为已归一化
+    """
     loss_type = cfg["training"]["loss"]
-    thresholds = [t / 255.0 for t in cfg["training"].get("bmse_thresholds",
-                  [16, 74, 133, 160, 181])]
-    weights = cfg["training"].get("bmse_weights", [1.0, 2.0, 5.0, 10.0, 30.0])
+    raw_thresh = cfg["training"].get("bmse_thresholds", [16, 74, 133, 160, 181])
+    if max(raw_thresh) > 1.5:
+        thresholds = [t / 255.0 for t in raw_thresh]
+    else:
+        thresholds = list(raw_thresh)
+    weights = list(cfg["training"].get("bmse_weights", [1.0, 2.0, 5.0, 10.0, 30.0]))
     # 权重数量应比阈值多1
     if len(weights) <= len(thresholds):
         weights.append(weights[-1] * 1.5)
