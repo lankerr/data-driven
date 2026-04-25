@@ -11,7 +11,7 @@ data:
   num_workers: 2
   max_days: null
   # 正确管线: stored×80 → cutoff → (可选 QMap) → log1p/log1p(80)
-  use_qmap: false          # 从头训 CQ, 不需要 QMap (代价是把弱雨夸大成SEVIR中雨)
+  use_qmap: true           # 启用 CQ→SEVIR 分位映射, 让强度分布对齐 SEVIR
   vil_cutoff: 1.0          # VIL < 1 kg/m² 归零 (去杂波)
 
 model:
@@ -39,7 +39,7 @@ training:
   loss: "combined"           # BMSE + SSIM
   ssim_weight: 0.3
   bmse_thresholds: [0.158, 0.408, 0.546, 0.693]
-  bmse_weights:    [1.0,   7.0,   22.0,  39.0,  100.0]
+  bmse_weights:    [1.0,   13.0,  11.0,  9.0,   9.0]
 
   patience: 15
   min_delta: 1.0e-4

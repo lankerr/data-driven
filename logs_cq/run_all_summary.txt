@@ -1,0 +1,9 @@
+
+
+==== run_chongqing_all.py 启动于 2026-04-22 21:46:53.384629 ====
+
+
+==== run_chongqing_all.py 启动于 2026-04-22 22:01:27.699183 ====
+[ERR1] configs_chongqing/e1_3h_to_3h.yaml  time=5.9min
+[ERR1] configs_chongqing/e3_mstc_nodetach.yaml  time=2.1min
+[ERR1] configs_chongqing/e4_mstc_detach.yaml  time=2.0min
